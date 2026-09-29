@@ -3144,6 +3144,58 @@ func (s *Store) StartSessionWithOwnershipMode(id, project, directory, mode strin
 	return nil
 }
 
+// ReopenEndedSession clears the terminal ended state of a runtime session so a
+// host that reuses its runtime id across a lifecycle event (for example Codex,
+// which keeps the same session_id when a thread is resumed) can re-register it.
+//
+// This is the single, explicit escape hatch from "EndSession remains terminal
+// truth". It does not validate ownership or project compatibility: callers must
+// run the ordinary StartSessionWithOwnershipMode validation first and only
+// reopen after it reports ErrSessionAlreadyEnded, so a resumed session can never
+// hijack another project's identity. It is a no-op when the session is missing
+// or still active, and it refreshes the runtime lease.
+func (s *Store) ReopenEndedSession(id string) error {
+	if err := validateSessionID(id); err != nil {
+		return err
+	}
+	return s.withTx(func(tx *sql.Tx) error {
+		res, err := s.execHook(tx,
+			`UPDATE sessions SET ended_at = NULL, runtime_lease_expires_at = datetime('now', ?) WHERE id = ? AND ended_at IS NOT NULL`,
+			runtimeSessionLeaseDuration, id,
+		)
+		if err != nil {
+			return err
+		}
+		rows, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return nil
+		}
+
+		var project, mode, directory, startedAt string
+		var storedSummary *string
+		if err := tx.QueryRow(
+			`SELECT ifnull(project, ''), ifnull(ownership_mode, ''), directory, started_at, summary FROM sessions WHERE id = ?`,
+			id,
+		).Scan(&project, &mode, &directory, &startedAt, &storedSummary); err != nil {
+			return err
+		}
+		// ended_at is NULL again; the sync payload omits it to advertise the
+		// session as active.
+		return s.enqueueSyncMutationTx(tx, SyncEntitySession, id, SyncOpUpsert, syncSessionPayload{
+			ID:            id,
+			Project:       project,
+			OwnershipMode: mode,
+			Directory:     directory,
+			StartedAt:     startedAt,
+			EndedAt:       nil,
+			Summary:       storedSummary,
+		})
+	})
+}
+
 func (s *Store) EndSession(id string, summary string) error {
 	if err := validateSessionID(id); err != nil {
 		return err

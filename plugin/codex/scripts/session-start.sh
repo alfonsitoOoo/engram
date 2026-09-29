@@ -28,6 +28,14 @@ source "${SCRIPT_DIR}/_helpers.sh"
 # Read hook input from stdin
 INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
+# Only an explicit host-reported resume may reopen a session Engram already
+# ended: otherwise an ended session stays terminal. Startup, clear, compact, and
+# prompt events never resume.
+SOURCE=$(echo "$INPUT" | jq -r '.source // empty')
+RESUME=""
+if [ "$SOURCE" = "resume" ]; then
+  RESUME="resume"
+fi
 
 # Explicit ENGRAM_URL intentionally delegates ownership to an external server.
 if [ "$ENGRAM_MANAGED_LOCAL" = 1 ]; then
@@ -58,7 +66,7 @@ fi
 PROJECT=$(resolve_project "$CWD") || PROJECT=""
 
 # Register and retain only the server-confirmed runtime identity.
-SESSION_HANDOFF=$(engram_session_handoff "$INPUT" "$PROJECT" "$CWD") && SESSION_REGISTERED=1 || SESSION_REGISTERED=0
+SESSION_HANDOFF=$(engram_session_handoff "$INPUT" "$PROJECT" "$CWD" "$RESUME") && SESSION_REGISTERED=1 || SESSION_REGISTERED=0
 
 # Auto-import git-synced chunks
 if [ -f "${CWD}/.engram/manifest.json" ]; then

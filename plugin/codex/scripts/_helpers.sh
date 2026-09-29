@@ -30,13 +30,17 @@ resolve_project() {
 }
 
 # Transport the server-confirmed runtime identity; never choose a session here.
+# The optional 4th argument, when "resume", asks the server to reopen a session
+# it already ended (Codex reuses the same runtime id when a thread is resumed).
+# Only lifecycle hooks pass it; the prompt hook must not revive ended sessions.
 engram_session_handoff() {
-  local input="$1" project="$2" dir="$3" payload response identity=""
+  local input="$1" project="$2" dir="$3" resume="${4:-}" payload response identity=""
   if [ -n "$project" ]; then
-    payload=$(printf '%s' "$input" | jq -ecs --arg project "$project" --arg dir "$dir" '
+    payload=$(printf '%s' "$input" | jq -ecs --arg project "$project" --arg dir "$dir" --arg resume "$resume" '
       select(length == 1) | .[0] |
       select((.session_id | type) == "string" and (.session_id | length) > 0) |
       {id: .session_id, project: $project, directory: $dir}
+        + (if $resume == "resume" then {resume: true} else {} end)
     ' 2>/dev/null) || payload=""
     if [ -n "$payload" ]; then
       response=$(printf '%s' "$payload" | curl -sf "${ENGRAM_URL}/sessions" --max-time 2 \

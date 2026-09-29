@@ -513,6 +513,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Project       string `json:"project"`
 		Directory     string `json:"directory"`
 		OwnershipMode string `json:"ownership_mode"`
+		// Resume lets a host that reuses its runtime id across a lifecycle event
+		// (Codex keeps the same session_id when a thread is resumed) re-register a
+		// session Engram already ended. It is opt-in: an ordinary call still gets
+		// 409 for an ended session.
+		Resume bool `json:"resume"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -527,7 +532,19 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = store.SessionOwnershipShared
 	}
-	if err := s.store.StartSessionWithOwnershipMode(body.ID, body.Project, projectpkg.RuntimeWorktreeDirectory(body.Directory), mode); err != nil {
+	directory := projectpkg.RuntimeWorktreeDirectory(body.Directory)
+	err := s.store.StartSessionWithOwnershipMode(body.ID, body.Project, directory, mode)
+	if err != nil && body.Resume && errors.Is(err, store.ErrSessionAlreadyEnded) {
+		// Ownership and project compatibility were validated by the rejected
+		// start, so reopening here cannot hijack another project's identity. A
+		// resume that fails to reopen keeps the original terminal error.
+		if reopenErr := s.store.ReopenEndedSession(body.ID); reopenErr != nil {
+			err = reopenErr
+		} else {
+			err = s.store.StartSessionWithOwnershipMode(body.ID, body.Project, directory, mode)
+		}
+	}
+	if err != nil {
 		var conflict *store.SessionProjectConflictError
 		switch {
 		case errors.Is(err, store.ErrSessionAlreadyEnded):

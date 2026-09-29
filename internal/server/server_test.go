@@ -4308,3 +4308,36 @@ func TestHandleCreateSessionRenewsRuntimeLeaseAndRejectsEndedSession(t *testing.
 		t.Fatalf("ended-session response = %#v", response)
 	}
 }
+
+func TestHandleCreateSessionResumesEndedRuntimeSession(t *testing.T) {
+	st := newServerTestStore(t)
+	h := New(st, 0).Handler()
+	if err := st.StartSession("resume-http", "resume-project", "/resume"); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	if err := st.EndSession("resume-http", "finished"); err != nil {
+		t.Fatalf("end session: %v", err)
+	}
+
+	post := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sessions", strings.NewReader(body)))
+		return rec
+	}
+
+	// Without an explicit resume the ended session stays terminal.
+	if rec := post(`{"id":"resume-http","project":"resume-project"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("plain POST /sessions = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	// An explicit resume reopens it under the same identity.
+	if rec := post(`{"id":"resume-http","project":"resume-project","resume":true}`); rec.Code != http.StatusCreated {
+		t.Fatalf("resume POST /sessions = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	resumed, err := st.GetSession("resume-http")
+	if err != nil {
+		t.Fatalf("get resumed session: %v", err)
+	}
+	if resumed.EndedAt != nil || resumed.Project != "resume-project" {
+		t.Fatalf("resumed session = %#v", resumed)
+	}
+}

@@ -208,7 +208,7 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					cwd := t.TempDir()
-					requests := make(chan map[string]string, 4)
+					requests := make(chan map[string]any, 4)
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						switch r.URL.Path {
 						case "/external/project/current":
@@ -233,7 +233,7 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 									t.Errorf("registration body lost UTF-8 bytes for opaque ID: %q", body)
 								}
 							}
-							var payload map[string]string
+							var payload map[string]any
 							if err := json.Unmarshal(body, &payload); err != nil {
 								t.Errorf("decode registration: %v", err)
 							}
@@ -374,7 +374,8 @@ func TestCodexRegisteredSessionHandoff(t *testing.T) {
 					}
 					if wantRequest {
 						registered := <-requests
-						if registered["id"] != id || registered["project"] != "test-project" || registered["directory"] != cwd {
+						wantResume := event == "resume"
+						if registered["id"] != id || registered["project"] != "test-project" || registered["directory"] != cwd || (registered["resume"] == true) != wantResume {
 							t.Errorf("incorrect registration payload: %#v", registered)
 						}
 					}

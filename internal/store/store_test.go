@@ -8372,6 +8372,42 @@ func TestStartSessionRejectsEndedSessionWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestReopenEndedSessionRestoresResumableRuntimeSession(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.StartSession("reopen-runtime", "engram", "/work"); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	if err := s.EndSession("reopen-runtime", "finished"); err != nil {
+		t.Fatalf("end session: %v", err)
+	}
+	// The ordinary path stays terminal: an ended session cannot be restarted.
+	if err := s.StartSession("reopen-runtime", "engram", "/work"); !errors.Is(err, ErrSessionAlreadyEnded) {
+		t.Fatalf("StartSession after end = %v, want ErrSessionAlreadyEnded", err)
+	}
+
+	if err := s.ReopenEndedSession("reopen-runtime"); err != nil {
+		t.Fatalf("reopen ended session: %v", err)
+	}
+	resumed, err := s.GetSession("reopen-runtime")
+	if err != nil {
+		t.Fatalf("get reopened session: %v", err)
+	}
+	if resumed.EndedAt != nil {
+		t.Fatalf("reopened session still ended: %#v", resumed)
+	}
+	if err := s.StartSession("reopen-runtime", "engram", "/work"); err != nil {
+		t.Fatalf("StartSession after reopen: %v", err)
+	}
+
+	// Reopening an active or unknown session is a no-op.
+	if err := s.ReopenEndedSession("reopen-runtime"); err != nil {
+		t.Fatalf("reopen active session: %v", err)
+	}
+	if err := s.ReopenEndedSession("absent-runtime"); err != nil {
+		t.Fatalf("reopen unknown session: %v", err)
+	}
+}
+
 func TestImportRejectsBlankSessionIDAtomically(t *testing.T) {
 	s := newTestStore(t)
 	data := &ExportData{Sessions: []Session{
